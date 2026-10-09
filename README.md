@@ -124,3 +124,4 @@ vercel
 2. Build command: `npm run build`
 3. Publish directory: `dist`
 4. Environment variable: `VITE_COMPANY_URL`"# interactive_safety_training_system" 
+"# interactive_safety_training" 
