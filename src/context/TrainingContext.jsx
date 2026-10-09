@@ -61,7 +61,8 @@ export function TrainingProvider({ children }) {
   const [usersList, setUsersList] = useSaved('users', sampleUsers);
   const [adminQuestions, setAdminQuestions] = useSaved('questions-v3', quizQuestions);
   const [adminPassMark, setAdminPassMark] = useSaved('passmark', 70);
-  const [notifications, setNotifications] = useState(systemNotifications);
+  const [notifications, setNotifications] = useSaved('notifications', systemNotifications);
+  const [auditNotes, setAuditNotes] = useSaved('audit-notes', []);
   const [selectedAuditUser, setSelectedAuditUser] = useState(sampleUsers[0]);
 
   const [lessonProgress, setLessonProgress] = useSaved('lessons', {});
@@ -69,14 +70,22 @@ export function TrainingProvider({ children }) {
   const [attempts, setAttempts] = useSaved('attempts', []);
   const [assignments, setAssignments] = useSaved('assignments', []);
   useEffect(() => {
-    const alexAttempts = attempts.filter(a => (a.employeeId ? a.employeeId.toLowerCase() === sampleUsers[0].id.toLowerCase() : true));
-    setUsersList(prev => prev.map(u => u.id === sampleUsers[0].id ? {
-      ...u,
-      completedModules,
-      progress: Math.round(completedModules.length / Math.max(1, modules.length) * 100),
-      avgScore: alexAttempts.length ? Math.round(alexAttempts.reduce((n,a)=>n+a.score,0)/alexAttempts.length) : 0,
-      lastActive: alexAttempts[0]?.completedAt || 'No assessment yet'
-    } : u));
+    setUsersList(prev => prev.map(u => {
+      const userAttempts = attempts.filter(a => a.employeeId && a.employeeId.toLowerCase() === u.id.toLowerCase());
+      const uCompleted = u.id === sampleUsers[0].id ? completedModules : (u.completedModules || []);
+      const avg = userAttempts.length ? Math.round(userAttempts.reduce((n, a) => n + a.score, 0) / userAttempts.length) : (u.avgScore || 0);
+      const prog = Math.round((uCompleted.length / Math.max(1, modules.length)) * 100);
+      const last = userAttempts[0]?.completedAt
+        ? new Date(userAttempts[0].completedAt).toLocaleString()
+        : (u.lastActive || 'No assessment yet');
+      return {
+        ...u,
+        completedModules: uCompleted,
+        progress: prog,
+        avgScore: avg,
+        lastActive: last
+      };
+    }));
   }, [completedModules, attempts, modules.length]);
   const [rewards, setRewards] = useSaved('rewards', []);
   const awardOnce = (id, points) => { if (!rewards.includes(id)) { setRewards(prev => [...new Set([...prev, id])]); setSafetyPoints(prev => prev + points); } };
@@ -94,6 +103,62 @@ export function TrainingProvider({ children }) {
     setTimeout(() => {
       setToastMessage(null);
     }, 4000);
+  };
+
+  const sendReminder = (recipientId, customMessage) => {
+    const targetUser = usersList.find(u => u.id.toLowerCase() === recipientId.toLowerCase());
+    const name = targetUser?.name || recipientId;
+    const item = {
+      id: Date.now(),
+      recipientId: recipientId,
+      recipientName: name,
+      title: `Training Refresher Directive: ${name}`,
+      type: 'reminder',
+      timestamp: 'Just now',
+      date: new Date().toISOString(),
+      content: customMessage || `Supervisor reminder for ${name}: Please complete your pending health and safety training modules promptly.`
+    };
+    setNotifications(prev => [item, ...prev]);
+    showToast('Reminder sent successfully.', 'success');
+    return item;
+  };
+
+  const logAuditNote = (userId, noteText) => {
+    const targetUser = usersList.find(u => u.id.toLowerCase() === userId.toLowerCase());
+    const newNote = {
+      id: Date.now(),
+      userId: userId,
+      userName: targetUser?.name || userId,
+      author: currentUser?.name || 'Marcus Vance (Supervisor)',
+      note: noteText,
+      createdAt: new Date().toISOString()
+    };
+    setAuditNotes(prev => [newNote, ...prev]);
+    showToast('Audit note saved.', 'success');
+    return newNote;
+  };
+
+  const updateUserPermissions = (userId, updatedData) => {
+    setUsersList(prev => prev.map(u => {
+      if (u.id.toLowerCase() === userId.toLowerCase()) {
+        return { ...u, ...updatedData };
+      }
+      return u;
+    }));
+    if (selectedAuditUser?.id?.toLowerCase() === userId.toLowerCase()) {
+      setSelectedAuditUser(prev => ({ ...prev, ...updatedData }));
+    }
+    showToast('Permissions updated successfully.', 'success');
+  };
+
+  const updateModuleContent = (moduleId, updatedContent) => {
+    setModules(prev => prev.map(m => {
+      if (m.id === moduleId) {
+        return { ...m, ...updatedContent };
+      }
+      return m;
+    }));
+    showToast('Training content updated.', 'success');
   };
 
   // Login handler
@@ -274,8 +339,33 @@ export function TrainingProvider({ children }) {
 
     const percentage = Math.round((scoreCount / adminQuestions.length) * 100);
     const passed = percentage >= adminPassMark;
+    const nowIso = new Date().toISOString();
+    const empId = currentUser?.id || "EMP-4091";
+    const empName = currentUser?.name || "Alex Morgan";
+    const empDept = currentUser?.department || "Bay 4 Inbound Logistics";
+    const cleanId = empId.replace(/[^a-zA-Z0-9]/g, '');
+    const certNum = `CERT-${cleanId}-MH-2026-${String(certificates.length + 1).padStart(3, '0')}`;
 
-    setAttempts(prev => [{ id: crypto.randomUUID(), employeeId: currentUser?.id, employeeName: currentUser?.name, completedAt: new Date().toISOString(), score: percentage, passed, passMark: adminPassMark, answers: {...quizAnswers}, questions: adminQuestions.map(q => ({...q, options: [...q.options]})) }, ...prev]);
+    const newAttempt = {
+      id: (typeof crypto !== 'undefined' && crypto.randomUUID) ? crypto.randomUUID() : `att-${Date.now()}`,
+      employeeId: empId,
+      employeeName: empName,
+      department: empDept,
+      moduleId: 'hse-303',
+      moduleTitle: 'Manual Handling & Ergonomics',
+      moduleCode: 'HSE-303',
+      completedAt: nowIso,
+      score: percentage,
+      passed,
+      passMark: adminPassMark,
+      completionStatus: passed ? 'Completed' : 'In Progress',
+      certificateEligible: passed,
+      certificateId: passed ? certNum : null,
+      answers: { ...quizAnswers },
+      questions: adminQuestions.map(q => ({ ...q, options: [...q.options] }))
+    };
+
+    setAttempts(prev => [newAttempt, ...prev]);
     setQuizScore(percentage);
     setQuizPassed(passed);
     if (!passed) setPracticeComplete(false);
@@ -283,41 +373,45 @@ export function TrainingProvider({ children }) {
 
     if (passed) {
       awardOnce('assessment', 250);
-      if (currentUser?.id === sampleUsers[0].id) {
+      if (empId === sampleUsers[0].id) {
         setCompletedModules(prev => [...new Set([...prev, 'hse-303'])]);
       }
-      if (currentUser?.id) {
-        setUsersList(prev => prev.map(u => {
-          if (u.id.toLowerCase() === currentUser.id.toLowerCase()) {
-            const updated = [...new Set([...(u.completedModules || []), 'hse-303'])];
-            return {
-              ...u,
-              completedModules: updated,
-              progress: Math.round((updated.length / Math.max(1, modules.length)) * 100),
-              lastActive: 'Just now'
-            };
-          }
-          return u;
-        }));
-        setCurrentUser(prev => prev ? {
-          ...prev,
-          completedModules: [...new Set([...(prev.completedModules || []), 'hse-303'])]
-        } : prev);
-      }
-      // Generate certificate
+      setUsersList(prev => prev.map(u => {
+        if (u.id.toLowerCase() === empId.toLowerCase()) {
+          const updated = [...new Set([...(u.completedModules || []), 'hse-303'])];
+          const userAttempts = [newAttempt, ...attempts.filter(a => a.employeeId?.toLowerCase() === empId.toLowerCase())];
+          const newAvg = Math.round(userAttempts.reduce((n, a) => n + a.score, 0) / userAttempts.length);
+          return {
+            ...u,
+            completedModules: updated,
+            progress: Math.round((updated.length / Math.max(1, modules.length)) * 100),
+            avgScore: newAvg,
+            lastActive: 'Just now'
+          };
+        }
+        return u;
+      }));
+      setCurrentUser(prev => prev ? {
+        ...prev,
+        completedModules: [...new Set([...(prev.completedModules || []), 'hse-303'])]
+      } : prev);
+
+      // Generate credible certificate with automotive client context
       const newCert = {
-        id: `CERT-HSE-ASSESS-${Date.now()}`,
-        certificateNumber: `SAFE-2026-${Math.floor(1000 + Math.random() * 9000)}`,
-        courseName: "Warehouse Safety & Manual Handling Assessment",
-        moduleCode: "HSE-ASSESS",
-        employeeName: currentUser?.name || "Alex Morgan",
-        employeeId: currentUser?.id || "EMP-4091",
-        issueDate: new Date().toISOString().split('T')[0],
+        id: `CERT-HSE-303-${Date.now()}`,
+        certificateNumber: certNum,
+        courseName: "Warehouse Safety & Manual Handling Compliance",
+        moduleCode: "HSE-303",
+        employeeName: empName,
+        employeeId: empId,
+        department: empDept,
+        organisation: "Logistics & Warehousing Company – Automotive Sector",
+        issueDate: nowIso.split('T')[0],
         score: percentage,
-        status: "Prototype training record",
-        instructor: "Marcus Vance, Lead Safety Auditor"
+        status: "Certified Compliant",
+        instructor: "Marcus Vance, Lead Safety Auditor & Shift Supervisor"
       };
-      setCertificates(prev => [newCert, ...prev]);
+      setCertificates(prev => [newCert, ...prev.filter(c => !(c.employeeId === empId && c.moduleCode === 'HSE-303'))]);
       showToast(`Assessment Passed with ${percentage}%! Certificate Generated.`, 'success');
     } else {
       showToast(`Score: ${percentage}%. You need ${adminPassMark}% to pass. Please review lessons and retry.`, 'warning');
@@ -330,6 +424,25 @@ export function TrainingProvider({ children }) {
     setQuizSubmitted(false);
     setQuizScore(null);
     setQuizPassed(false);
+  };
+
+  const getModuleStatus = (modId, userId = currentUser?.id) => {
+    if (!modId) return 'Assigned';
+    const targetId = userId || currentUser?.id;
+    const isDone = isModuleCompleted(modId, targetId);
+    if (isDone) return 'Completed';
+
+    const userAssignments = assignments.filter(a => a.employeeId?.toLowerCase() === targetId?.toLowerCase() && a.moduleId === modId);
+    const assignment = userAssignments[0];
+    const todayStr = new Date().toISOString().slice(0, 10);
+    if (assignment?.due && assignment.due < todayStr) return 'Overdue';
+
+    const prog = targetId === sampleUsers[0].id ? (lessonProgress[modId] || 0) : 0;
+    if (prog > 0) return 'In Progress';
+
+    if (assignment) return 'Assigned';
+
+    return 'Assigned';
   };
 
   return (
@@ -350,6 +463,7 @@ export function TrainingProvider({ children }) {
           };
         }),
         lessonProgress, practiceComplete, finishPractice, attempts, assignments, setAssignments, isModuleCompleted,
+        getModuleStatus,
         setModules,
         activeModuleId,
         setActiveModuleId,
@@ -397,6 +511,12 @@ export function TrainingProvider({ children }) {
         setAdminPassMark,
         notifications,
         setNotifications,
+        auditNotes,
+        setAuditNotes,
+        sendReminder,
+        logAuditNote,
+        updateUserPermissions,
+        updateModuleContent,
         selectedAuditUser: usersList.find(u => u.id === selectedAuditUser.id) || selectedAuditUser,
         setSelectedAuditUser,
         toastMessage,

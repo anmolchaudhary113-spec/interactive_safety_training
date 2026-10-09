@@ -5,9 +5,10 @@ import {
 import { useTraining } from '../../context/TrainingContext';
 
 export default function UserManagement() {
-  const { usersList, setUsersList, setSelectedAuditUser, setCurrentView, showToast } = useTraining();
+  const { usersList, setUsersList, setSelectedAuditUser, setCurrentView, showToast, updateUserPermissions } = useTraining();
   const [searchTerm, setSearchTerm] = useState('');
   const [showAddModal, setShowAddModal] = useState(false);
+  const [editingUser, setEditingUser] = useState(null);
   const [newUser, setNewUser] = useState({
     name: '',
     email: '',
@@ -27,7 +28,7 @@ export default function UserManagement() {
   const handleAddUser = (e) => {
     e.preventDefault();
     if (!newUser.name || !newUser.email) {
-      alert('Please provide a name and email');
+      showToast('Please provide a name and email.', 'warning');
       return;
     }
     const created = {
@@ -43,6 +44,16 @@ export default function UserManagement() {
     setShowAddModal(false);
     setNewUser({ name: '', email: '', role: 'employee', department: 'Bay 4 Inbound Logistics', progress: 0, avgScore: 0, status: 'Active' });
     showToast(`Added ${created.name} to warehouse training roster`, 'success');
+  };
+
+  const handleSavePermissions = (e) => {
+    e.preventDefault();
+    if (!editingUser.name || !editingUser.email) {
+      showToast('Please provide a name and email.', 'warning');
+      return;
+    }
+    updateUserPermissions(editingUser.id, editingUser);
+    setEditingUser(null);
   };
 
   const handleToggleStatus = (userId) => {
